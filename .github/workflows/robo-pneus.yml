@@ -2,7 +2,7 @@ name: Robô de preços de pneus
 
 on:
   schedule:
-    - cron: "0 19 * * 1-5"
+    - cron: "0 10 * * 1-5"
   workflow_dispatch:
 
 permissions:
