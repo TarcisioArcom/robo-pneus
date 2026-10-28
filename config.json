@@ -1,15 +1,71 @@
 {
   "medida": "185/65 R15",
   "consulta": "pneu 185/65 R15 novo",
+  "buscas_por_marca": [
+    "Pirelli",
+    "Continental",
+    "Goodyear",
+    "Michelin",
+    "Bridgestone",
+    "Firestone"
+  ],
   "preco_minimo_unitario": 180,
   "preco_maximo_unitario": 1500,
   "palavras_proibidas": [
-    "remold", "remoldado", "remoldagem", "recapado", "recapagem",
-    "recauchutado", "recauchutagem", "ressolado", "reformado",
-    "recondicionado", "meia vida", "meia-vida", "usado", "seminovo",
-    "semi novo", "carcaca", "camara de ar", "protetor", "calota",
-    "roda", "aro de ferro", "capa", "bico"
+    "remold",
+    "remoldado",
+    "remoldagem",
+    "recapado",
+    "recapagem",
+    "recauchutado",
+    "recauchutagem",
+    "ressolado",
+    "reformado",
+    "recondicionado",
+    "meia vida",
+    "meia-vida",
+    "usado",
+    "seminovo",
+    "semi novo",
+    "carcaca",
+    "camara de ar",
+    "protetor",
+    "calota",
+    "roda",
+    "aro de ferro",
+    "capa",
+    "bico"
   ],
+  "somente_marcas_listadas": true,
+  "categorias_marcas": {
+    "Premium": [
+      "Pirelli",
+      "Continental",
+      "Goodyear",
+      "Michelin",
+      "Bridgestone"
+    ],
+    "Linha intermediária": [
+      "Firestone",
+      "Dunlop",
+      "Yokohama",
+      "Hankook",
+      "Kumho",
+      "General",
+      "BFGoodrich",
+      "Toyo",
+      "Nexen",
+      "Barum"
+    ],
+    "Chinesa de qualidade": [
+      "Linglong",
+      "Sailun",
+      "Giti",
+      "GT Radial",
+      "Triangle",
+      "Westlake"
+    ]
+  },
   "lojas_vtex": [],
   "max_ofertas_relatorio": 25,
   "dias_historico_email": 20

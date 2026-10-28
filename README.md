@@ -97,3 +97,18 @@ O e-mail traz:
 
 O relatório no GitHub Pages mostra o mesmo histórico, das últimas 60 pesquisas, além do gráfico.
 O histórico começa a partir da primeira execução do robô; não é possível recuperar preços de dias anteriores a ela.
+
+## Marcas
+
+Com `"somente_marcas_listadas": true` no `config.json`, só entram as marcas de `categorias_marcas`:
+
+- **Premium:** Pirelli, Continental, Goodyear, Michelin, Bridgestone
+- **Linha intermediária:** Firestone, Dunlop, Yokohama, Hankook, Kumho, General, BFGoodrich, Toyo, Nexen, Barum
+- **Chinesa de qualidade:** Linglong, Sailun, Giti, GT Radial, Triangle, Westlake
+
+Para incluir ou tirar uma marca, edite as listas. Para voltar a aceitar qualquer marca, use `false`.
+O e-mail e o relatório mostram o melhor preço de cada categoria.
+
+`buscas_por_marca` faz uma busca extra no Google Shopping para cada marca listada, para trazer mais ofertas
+dessas marcas. Cada busca gasta 1 crédito da SerpApi: com 1 busca geral + 6 marcas são 7 por dia útil,
+cerca de 155 por mês, dentro das 250 do plano gratuito. Não passe de 10 buscas por dia.

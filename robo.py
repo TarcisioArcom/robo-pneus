@@ -79,6 +79,24 @@ def quantidade(titulo: str) -> int:
     return q if 1 <= q <= 8 else 1
 
 
+CATEGORIAS = CONFIG.get("categorias_marcas", {})
+CATEGORIA_DA_MARCA = {m: cat for cat, ms in CATEGORIAS.items() for m in ms}
+ORDEM_CATEGORIAS = list(CATEGORIAS)
+for _m in CATEGORIA_DA_MARCA:  # garante que toda marca do config seja reconhecida
+    if _m not in MARCAS:
+        MARCAS.insert(0, _m)
+MARCAS.sort(key=len, reverse=True)  # "GT Radial" antes de nomes curtos
+SOMENTE_LISTADAS = CONFIG.get("somente_marcas_listadas", False)
+
+
+def categoria(nome_marca: str) -> str:
+    return CATEGORIA_DA_MARCA.get(nome_marca, "Outras")
+
+
+def marca_permitida(nome_marca: str) -> bool:
+    return not SOMENTE_LISTADAS or nome_marca in CATEGORIA_DA_MARCA
+
+
 def marca(titulo: str) -> str:
     t = normalizar(titulo)
     for m in MARCAS:
@@ -94,6 +112,9 @@ def montar(titulo, loja, preco_total, link, fonte):
         return None
     if not titulo or preco_total <= 0 or not oferta_valida(titulo):
         return None
+    m = marca(titulo)
+    if not marca_permitida(m):
+        return None
     qtd = quantidade(titulo)
     unit = round(preco_total / qtd, 2)
     if not (CONFIG["preco_minimo_unitario"] <= unit <= CONFIG["preco_maximo_unitario"]):
@@ -102,7 +123,8 @@ def montar(titulo, loja, preco_total, link, fonte):
         "data": HOJE,
         "fonte": fonte,
         "loja": (loja or "Desconhecida").strip(),
-        "marca": marca(titulo),
+        "marca": m,
+        "categoria": categoria(m),
         "titulo": titulo.strip(),
         "quantidade": qtd,
         "preco_total": round(preco_total, 2),
@@ -117,14 +139,24 @@ def fonte_google_shopping() -> list[dict]:
     if not chave:
         print("[google] SERPAPI_KEY ausente, fonte ignorada")
         return []
-    params = {
-        "engine": "google_shopping", "q": CONFIG["consulta"], "gl": "br", "hl": "pt-br",
-        "google_domain": "google.com.br", "location": "Brazil", "num": 100, "api_key": chave,
-    }
-    r = requests.get("https://serpapi.com/search.json", params=params, timeout=60)
-    r.raise_for_status()
-    dados = r.json()
-    itens = dados.get("shopping_results", []) + dados.get("inline_shopping_results", [])
+    # 1 busca geral + 1 por marca (cada busca consome 1 crédito da SerpApi; plano grátis = 250/mês)
+    consultas = [CONFIG["consulta"]] + [f"pneu {m} 185/65 R15" for m in CONFIG.get("buscas_por_marca", [])]
+    itens = []
+    for q in consultas:
+        params = {
+            "engine": "google_shopping", "q": q, "gl": "br", "hl": "pt-br",
+            "google_domain": "google.com.br", "location": "Brazil", "api_key": chave,
+        }
+        try:
+            r = requests.get("https://serpapi.com/search.json", params=params, timeout=60)
+            r.raise_for_status()
+            dados = r.json()
+        except Exception as e:  # noqa: BLE001
+            print(f"[google] busca '{q}' falhou: {e}")
+            continue
+        novos = dados.get("shopping_results", []) + dados.get("inline_shopping_results", [])
+        print(f"[google] '{q}': {len(novos)} resultados")
+        itens += novos
     saida = []
     for it in itens:
         o = montar(it.get("title"), it.get("source"), it.get("extracted_price"),
@@ -193,7 +225,7 @@ def fonte_vtex() -> list[dict]:
 
 
 # --------------------------------------------------------------------------- persistência
-CAMPOS = ["data", "fonte", "loja", "marca", "titulo", "quantidade", "preco_total", "preco_unitario", "link"]
+CAMPOS = ["data", "fonte", "loja", "marca", "categoria", "titulo", "quantidade", "preco_total", "preco_unitario", "link"]
 
 
 def deduplicar(ofertas: list[dict]) -> list[dict]:
@@ -216,10 +248,13 @@ def salvar(ofertas: list[dict]) -> list[dict]:
             linhas = [l for l in csv.DictReader(f) if l["data"] != HOJE]  # reexecução no mesmo dia substitui
     linhas += ofertas
     with arq.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=CAMPOS)
+        w = csv.DictWriter(f, fieldnames=CAMPOS, extrasaction="ignore")
         w.writeheader()
         w.writerows(linhas)
-    return linhas
+    # para os relatórios, só entram marcas permitidas (o CSV guarda tudo o que já foi coletado)
+    for l in linhas:
+        l["categoria"] = categoria(l["marca"])
+    return [l for l in linhas if marca_permitida(l["marca"])]
 
 
 # --------------------------------------------------------------------------- relatório
@@ -304,6 +339,24 @@ def tabela_historico_html(historico: list[dict]) -> str:
             f'<tbody>{linhas}</tbody></table></div></section>')
 
 
+def melhores_por_categoria(ofertas: list[dict]) -> list[tuple[str, dict]]:
+    res = []
+    for cat in ORDEM_CATEGORIAS + ["Outras"]:
+        do_cat = [o for o in ofertas if o["categoria"] == cat]
+        if do_cat:
+            res.append((cat, min(do_cat, key=lambda o: o["preco_unitario"])))
+    return res
+
+
+def cards_categoria_html(ofertas: list[dict]) -> str:
+    e = html.escape
+    cards = "".join(
+        f'<a class="cat" href="{e(o["link"])}" target="_blank" rel="noopener"><span>Melhor {e(cat.lower())}</span>'
+        f'<strong>{brl(o["preco_unitario"])}</strong><small>{e(o["marca"])}, {e(o["loja"])}</small></a>'
+        for cat, o in melhores_por_categoria(ofertas))
+    return f'<section class="cats">{cards}</section>' if cards else ""
+
+
 def gerar_html(ofertas: list[dict], historico: list[dict]) -> str:
     e = html.escape
     serie = serie_diaria(historico)
@@ -325,7 +378,7 @@ def gerar_html(ofertas: list[dict], historico: list[dict]) -> str:
             if o["marca"] not in por_marca or o["preco_unitario"] < por_marca[o["marca"]]["preco_unitario"]:
                 por_marca[o["marca"]] = o
         linhas_marca = "".join(
-            f'<tr><td>{e(m)}</td><td class="num">{brl(o["preco_unitario"])}</td><td>{e(o["loja"])}</td>'
+            f'<tr><td>{e(m)}</td><td><small>{e(o["categoria"])}</small></td><td class="num">{brl(o["preco_unitario"])}</td><td>{e(o["loja"])}</td>'
             f'<td><a href="{e(o["link"])}" target="_blank" rel="noopener">Ver oferta</a></td></tr>'
             for m, o in sorted(por_marca.items(), key=lambda kv: kv[1]["preco_unitario"]))
         linhas_top = "".join(
@@ -340,6 +393,7 @@ def gerar_html(ofertas: list[dict], historico: list[dict]) -> str:
   <p class="detalhe">{e(top['marca'])} na {e(top['loja'])} {var}</p>
   <a class="botao" href="{e(top['link'])}" target="_blank" rel="noopener">Abrir a oferta</a>
 </section>
+{cards_categoria_html(ofertas)}
 <section class="kpis">
   <div><strong>{brl(median(precos))}</strong><span>Mediana</span></div>
   <div><strong>{brl(mean(precos))}</strong><span>Média</span></div>
@@ -349,7 +403,7 @@ def gerar_html(ofertas: list[dict], historico: list[dict]) -> str:
 <section class="card"><h2>Evolução (últimos 30 dias de coleta)</h2>{grafico_svg(serie)}</section>
 {tabela_historico_html(historico)}
 <section class="card"><h2>Mais barato por marca</h2><div class="rolagem"><table>
-<thead><tr><th>Marca</th><th class="num">Preço/un.</th><th>Loja</th><th></th></tr></thead><tbody>{linhas_marca}</tbody></table></div></section>
+<thead><tr><th>Marca</th><th>Categoria</th><th class="num">Preço/un.</th><th>Loja</th><th></th></tr></thead><tbody>{linhas_marca}</tbody></table></div></section>
 <section class="card"><h2>Ranking das ofertas</h2><div class="rolagem"><table>
 <thead><tr><th class="num">#</th><th>Produto</th><th>Marca</th><th>Loja</th><th class="num">Preço/un.</th><th></th></tr></thead><tbody>{linhas_top}</tbody></table></div></section>"""
     return f"""<!DOCTYPE html>
@@ -379,6 +433,10 @@ h2{{margin:0 0 12px;font-size:1.05rem}}
 .rolagem{{overflow-x:auto}} table{{width:100%;border-collapse:collapse;font-size:.9rem}}
 th,td{{padding:8px 10px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}}
 th{{color:var(--muted);font-weight:600}} .num{{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}}
+.cats{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}}
+.cat{{display:block;background:var(--card);border:1px solid var(--border);border-left:4px solid var(--brand);border-radius:var(--radius);padding:14px;text-decoration:none;color:var(--text)}}
+.cat span{{display:block;color:var(--muted);font-size:.85rem}} .cat strong{{display:block;font-size:1.4rem;color:var(--brand);font-variant-numeric:tabular-nums}}
+.cat small{{color:var(--muted)}}
 .recorde{{margin:0 0 12px;color:var(--muted)}} .recorde b{{color:var(--brand)}}
 a{{color:var(--brand)}} small{{color:var(--muted)}} .vazio{{color:var(--muted);margin:0}}
 svg{{width:100%;height:auto}} .grade{{stroke:var(--border)}} .eixo{{fill:var(--muted);font-size:11px}}
@@ -480,7 +538,7 @@ abaixo, as últimas {len(ult)}. O histórico completo segue em anexo.</p>
             if o["marca"] not in por_marca or o["preco_unitario"] < por_marca[o["marca"]]["preco_unitario"]:
                 por_marca[o["marca"]] = o
         marcas = "".join(
-            f'<tr><td style="{td}">{e(m)}</td><td style="{tdn}"><b>{brl(o["preco_unitario"])}</b></td>'
+            f'<tr><td style="{td}">{e(m)}<br><span style="color:{cinza};font-size:12px">{e(o["categoria"])}</span></td><td style="{tdn}"><b>{brl(o["preco_unitario"])}</b></td>'
             f'<td style="{td}"><a href="{e(o["link"])}" style="color:{verde}">{e(o["loja"])}</a></td></tr>'
             for m, o in sorted(por_marca.items(), key=lambda kv: kv[1]["preco_unitario"]))
         ranking = "".join(
@@ -489,6 +547,16 @@ abaixo, as últimas {len(ult)}. O histórico completo segue em anexo.</p>
             f'<br><span style="color:{cinza};font-size:12px">{e(o["loja"])}</span></td>'
             f'<td style="{tdn}"><b>{brl(o["preco_unitario"])}</b></td></tr>'
             for i, o in enumerate(ofertas[:15], 1))
+        cats = melhores_por_categoria(ofertas)
+        larg_cat = int(100 / max(len(cats), 1))
+        bloco_cat = "".join(
+            f'<td width="{larg_cat}%" style="padding:12px;border:1px solid {borda};border-left:4px solid {verde};{fonte}vertical-align:top">'
+            f'<div style="font-size:12px;color:{cinza}">Melhor {e(cat.lower())}</div>'
+            f'<div style="font-size:20px;font-weight:700;color:{verde}"><a href="{e(o["link"])}" style="color:{verde};text-decoration:none">{brl(o["preco_unitario"])}</a></div>'
+            f'<div style="font-size:12px;color:{texto}">{e(o["marca"])}<br><span style="color:{cinza}">{e(o["loja"])}</span></div></td>'
+            for cat, o in cats)
+        bloco_cat = (f'<table width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;border-collapse:separate;border-spacing:0">'
+                     f'<tr>{bloco_cat}</tr></table>') if bloco_cat else ""
         kpi = lambda v, r: (f'<td style="padding:10px;border:1px solid {borda};{fonte}" width="25%">'
                             f'<div style="font-size:16px;font-weight:700;color:{texto}">{v}</div>'
                             f'<div style="font-size:12px;color:{cinza}">{r}</div></td>')
@@ -500,6 +568,7 @@ abaixo, as últimas {len(ult)}. O histórico completo segue em anexo.</p>
   <div style="font-size:14px;color:{texto}">{e(top['marca'])} na {e(top['loja'])}</div>{var}
   <div style="margin-top:14px"><a href="{e(top['link'])}" style="background:{verde};color:#ffffff;padding:9px 16px;border-radius:6px;text-decoration:none;font-weight:600;{fonte}font-size:14px">Abrir a oferta</a></div>
 </td></tr></table>
+{bloco_cat}
 <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;border-collapse:collapse"><tr>
 {kpi(brl(median(precos)), "Mediana")}{kpi(brl(mean(precos)), "Média")}{kpi(len(ofertas), "Ofertas válidas")}{kpi(len({o['loja'] for o in ofertas}), "Lojas")}
 </tr></table>
@@ -564,9 +633,9 @@ def enviar_email(ofertas: list[dict], historico: list[dict]) -> None:
     msg.set_content(texto)  # versão texto puro, para leitores sem HTML
     msg.add_alternative(html_email(ofertas, historico), subtype="html")
     if ofertas:
-        buf = [";".join(["Marca", "Loja", "Produto", "Qtd", "Preço total", "Preço unitário", "Link"])]
+        buf = [";".join(["Marca", "Categoria", "Loja", "Produto", "Qtd", "Preço total", "Preço unitário", "Link"])]
         for o in ofertas:
-            buf.append(";".join([o["marca"], o["loja"], o["titulo"].replace(";", ","), str(o["quantidade"]),
+            buf.append(";".join([o["marca"], o["categoria"], o["loja"], o["titulo"].replace(";", ","), str(o["quantidade"]),
                                  f"{o['preco_total']:.2f}".replace(".", ","),
                                  f"{o['preco_unitario']:.2f}".replace(".", ","), o["link"]]))
         # CSV com ponto e vírgula e BOM: abre direto no Excel em português com acentos corretos
@@ -581,8 +650,8 @@ def enviar_email(ofertas: list[dict], historico: list[dict]) -> None:
              for r in reversed(dias)]),
             maintype="text", subtype="csv", filename="historico-resumo-por-dia.csv")
         msg.add_attachment(csv_excel(
-            ["Data", "Marca", "Loja", "Produto", "Qtd", "Preço total", "Preço unitário", "Fonte", "Link"],
-            [[data_br(l["data"]), l["marca"], l["loja"], l["titulo"], l["quantidade"], num_br(float(l["preco_total"])),
+            ["Data", "Marca", "Categoria", "Loja", "Produto", "Qtd", "Preço total", "Preço unitário", "Fonte", "Link"],
+            [[data_br(l["data"]), l["marca"], l["categoria"], l["loja"], l["titulo"], l["quantidade"], num_br(float(l["preco_total"])),
               num_br(float(l["preco_unitario"])), l["fonte"], l["link"]]
              for l in sorted(historico, key=lambda l: (l["data"], float(l["preco_unitario"])), reverse=True)]),
             maintype="text", subtype="csv", filename="historico-completo-ofertas.csv")
