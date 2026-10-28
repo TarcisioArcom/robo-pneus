@@ -66,35 +66,23 @@
   ],
   "desconto_maximo_vs_mediana": 0.35,
   "somente_marcas_listadas": true,
-  "categorias_marcas": {
-    "Premium": [
-      "Pirelli",
-      "Continental",
-      "Goodyear",
-      "Michelin",
-      "Bridgestone"
-    ],
-    "Linha intermediária": [
-      "Firestone",
-      "Dunlop",
-      "Yokohama",
-      "Hankook",
-      "Kumho",
-      "General",
-      "BFGoodrich",
-      "Toyo",
-      "Nexen",
-      "Barum"
-    ],
-    "Chinesa de qualidade": [
-      "Linglong",
-      "Sailun",
-      "Giti",
-      "GT Radial",
-      "Triangle",
-      "Westlake"
-    ]
-  },
+  "marcas_permitidas": [
+    "Pirelli",
+    "Continental",
+    "Goodyear",
+    "Michelin",
+    "Bridgestone",
+    "Firestone",
+    "Dunlop",
+    "Yokohama",
+    "Hankook",
+    "Kumho",
+    "General",
+    "BFGoodrich",
+    "Toyo",
+    "Nexen",
+    "Barum"
+  ],
   "lojas_vtex": [],
   "max_ofertas_relatorio": 25,
   "dias_historico_email": 20

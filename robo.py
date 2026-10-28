@@ -91,7 +91,10 @@ def quantidade(titulo: str) -> int:
     return q if 1 <= q <= 8 else 1
 
 
-CATEGORIAS = CONFIG.get("categorias_marcas", {})
+# "marcas_permitidas" (lista única) ou "categorias_marcas" ({categoria: [marcas]}) no config.json
+CATEGORIAS = CONFIG.get("categorias_marcas") or (
+    {"Marcas conhecidas": CONFIG["marcas_permitidas"]} if CONFIG.get("marcas_permitidas") else {})
+VARIAS_CATEGORIAS = len(CATEGORIAS) > 1
 CATEGORIA_DA_MARCA = {m: cat for cat, ms in CATEGORIAS.items() for m in ms}
 ORDEM_CATEGORIAS = list(CATEGORIAS)
 for _m in CATEGORIA_DA_MARCA:  # garante que toda marca do config seja reconhecida
@@ -259,7 +262,7 @@ def remover_precos_suspeitos(ofertas: list[dict]) -> list[dict]:
         precos = por_cat[o["categoria"]]
         if len(precos) >= 3:
             ref = median(precos)
-        elif ORDEM_CATEGORIAS and o["categoria"] == ORDEM_CATEGORIAS[-1]:
+        elif not VARIAS_CATEGORIAS or o["categoria"] == ORDEM_CATEGORIAS[-1]:
             ref = 0  # categoria mais barata com poucas ofertas: não compara com a mediana geral
         else:
             ref = geral
@@ -398,7 +401,7 @@ def cards_categoria_html(ofertas: list[dict]) -> str:
         f'<a class="cat" href="{e(o["link"])}" target="_blank" rel="noopener"><span>Melhor {e(cat.lower())}</span>'
         f'<strong>{brl(o["preco_unitario"])}</strong><small>{e(o["marca"])}, {e(o["loja"])}</small></a>'
         for cat, o in melhores_por_categoria(ofertas))
-    return f'<section class="cats">{cards}</section>' if cards else ""
+    return f'<section class="cats">{cards}</section>' if cards and VARIAS_CATEGORIAS else ""
 
 
 def gerar_html(ofertas: list[dict], historico: list[dict]) -> str:
@@ -422,7 +425,7 @@ def gerar_html(ofertas: list[dict], historico: list[dict]) -> str:
             if o["marca"] not in por_marca or o["preco_unitario"] < por_marca[o["marca"]]["preco_unitario"]:
                 por_marca[o["marca"]] = o
         linhas_marca = "".join(
-            f'<tr><td>{e(m)}</td><td><small>{e(o["categoria"])}</small></td><td class="num">{brl(o["preco_unitario"])}</td><td>{e(o["loja"])}</td>'
+            f'<tr><td>{e(m)}</td>{"<td><small>" + e(o["categoria"]) + "</small></td>" if VARIAS_CATEGORIAS else ""}<td class="num">{brl(o["preco_unitario"])}</td><td>{e(o["loja"])}</td>'
             f'<td><a href="{e(o["link"])}" target="_blank" rel="noopener">Ver oferta</a></td></tr>'
             for m, o in sorted(por_marca.items(), key=lambda kv: kv[1]["preco_unitario"]))
         linhas_top = "".join(
@@ -447,7 +450,7 @@ def gerar_html(ofertas: list[dict], historico: list[dict]) -> str:
 <section class="card"><h2>Evolução (últimos 30 dias de coleta)</h2>{grafico_svg(serie)}</section>
 {tabela_historico_html(historico)}
 <section class="card"><h2>Mais barato por marca</h2><div class="rolagem"><table>
-<thead><tr><th>Marca</th><th>Categoria</th><th class="num">Preço/un.</th><th>Loja</th><th></th></tr></thead><tbody>{linhas_marca}</tbody></table></div></section>
+<thead><tr><th>Marca</th>{"<th>Categoria</th>" if VARIAS_CATEGORIAS else ""}<th class="num">Preço/un.</th><th>Loja</th><th></th></tr></thead><tbody>{linhas_marca}</tbody></table></div></section>
 <section class="card"><h2>Ranking das ofertas</h2><div class="rolagem"><table>
 <thead><tr><th class="num">#</th><th>Produto</th><th>Marca</th><th>Loja</th><th class="num">Preço/un.</th><th></th></tr></thead><tbody>{linhas_top}</tbody></table></div></section>"""
     return f"""<!DOCTYPE html>
@@ -581,8 +584,10 @@ abaixo, as últimas {len(ult)}. O histórico completo segue em anexo.</p>
         for o in ofertas:
             if o["marca"] not in por_marca or o["preco_unitario"] < por_marca[o["marca"]]["preco_unitario"]:
                 por_marca[o["marca"]] = o
+        sub_cat = lambda o: (f'<br><span style="color:{cinza};font-size:12px">{e(o["categoria"])}</span>'
+                             if VARIAS_CATEGORIAS else "")
         marcas = "".join(
-            f'<tr><td style="{td}">{e(m)}<br><span style="color:{cinza};font-size:12px">{e(o["categoria"])}</span></td><td style="{tdn}"><b>{brl(o["preco_unitario"])}</b></td>'
+            f'<tr><td style="{td}">{e(m)}{sub_cat(o)}</td><td style="{tdn}"><b>{brl(o["preco_unitario"])}</b></td>'
             f'<td style="{td}"><a href="{e(o["link"])}" style="color:{verde}">{e(o["loja"])}</a></td></tr>'
             for m, o in sorted(por_marca.items(), key=lambda kv: kv[1]["preco_unitario"]))
         ranking = "".join(
@@ -591,7 +596,7 @@ abaixo, as últimas {len(ult)}. O histórico completo segue em anexo.</p>
             f'<br><span style="color:{cinza};font-size:12px">{e(o["loja"])}</span></td>'
             f'<td style="{tdn}"><b>{brl(o["preco_unitario"])}</b></td></tr>'
             for i, o in enumerate(ofertas[:15], 1))
-        cats = melhores_por_categoria(ofertas)
+        cats = melhores_por_categoria(ofertas) if VARIAS_CATEGORIAS else []
         larg_cat = int(100 / max(len(cats), 1))
         bloco_cat = "".join(
             f'<td width="{larg_cat}%" style="padding:12px;border:1px solid {borda};border-left:4px solid {verde};{fonte}vertical-align:top">'
