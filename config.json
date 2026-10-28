@@ -34,8 +34,37 @@
     "roda",
     "aro de ferro",
     "capa",
-    "bico"
+    "bico",
+    "usados",
+    "seminovos",
+    "semi-novo",
+    "pouco uso",
+    "pouquissimo uso",
+    "sem uso",
+    "rodado",
+    "rodados",
+    "rodagem de",
+    "estepe",
+    "sulco",
+    "mm de borracha",
+    "vida util",
+    "bom estado",
+    "otimo estado",
+    "excelente estado",
+    "retirado de carro",
+    "tirado do carro",
+    "desmontagem",
+    "sucata"
   ],
+  "lojas_bloqueadas": [
+    "OLX",
+    "Enjoei",
+    "Facebook",
+    "Marketplace",
+    "Desapega",
+    "Usados"
+  ],
+  "desconto_maximo_vs_mediana": 0.35,
   "somente_marcas_listadas": true,
   "categorias_marcas": {
     "Premium": [

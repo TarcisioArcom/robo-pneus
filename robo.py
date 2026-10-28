@@ -64,11 +64,23 @@ RE_KIT = re.compile(r"\b(?:kit|jogo|combo)\s*(?:c/|com|de)?\s*(\d)\b|\b(\d)\s*(?
 PROIBIDAS = [re.compile(rf"\b{re.escape(normalizar(p))}\b") for p in CONFIG["palavras_proibidas"]]
 
 
-def oferta_valida(titulo: str) -> bool:
+LOJAS_BLOQUEADAS = [re.compile(rf"\b{re.escape(normalizar(l))}\b") for l in CONFIG.get("lojas_bloqueadas", [])]
+RE_CONDICAO_USADO = re.compile(r"\b(usad[oa]s?|seminov[oa]s?|pre-owned|used|refurbished|recondicionad[oa]s?)\b")
+
+
+def oferta_valida(titulo: str, texto_extra: str = "") -> bool:
     t = normalizar(titulo)
     if not RE_MEDIDA.search(t):
         return False
-    return not any(p.search(t) for p in PROIBIDAS)
+    extra = normalizar(texto_extra)
+    if RE_CONDICAO_USADO.search(extra):  # condição informada pela loja/Google (ex.: "Usado")
+        return False
+    return not any(p.search(t) or p.search(extra) for p in PROIBIDAS)
+
+
+def loja_bloqueada(loja: str) -> bool:
+    l = normalizar(loja)
+    return any(p.search(l) for p in LOJAS_BLOQUEADAS)
 
 
 def quantidade(titulo: str) -> int:
@@ -105,12 +117,14 @@ def marca(titulo: str) -> str:
     return "Outra"
 
 
-def montar(titulo, loja, preco_total, link, fonte):
+def montar(titulo, loja, preco_total, link, fonte, texto_extra=""):
     try:
         preco_total = float(preco_total)
     except (TypeError, ValueError):
         return None
-    if not titulo or preco_total <= 0 or not oferta_valida(titulo):
+    if not titulo or preco_total <= 0 or not oferta_valida(titulo, texto_extra):
+        return None
+    if loja_bloqueada(loja or "") or loja_bloqueada(link or ""):
         return None
     m = marca(titulo)
     if not marca_permitida(m):
@@ -159,8 +173,11 @@ def fonte_google_shopping() -> list[dict]:
         itens += novos
     saida = []
     for it in itens:
+        extra = " ".join(str(x) for x in [
+            it.get("second_hand_condition"), it.get("condition"), it.get("snippet"), it.get("tag"),
+            *(it.get("extensions") or [])] if x)
         o = montar(it.get("title"), it.get("source"), it.get("extracted_price"),
-                   it.get("product_link") or it.get("link"), "Google Shopping")
+                   it.get("product_link") or it.get("link"), "Google Shopping", extra)
         if o:
             saida.append(o)
     print(f"[google] {len(itens)} resultados, {len(saida)} válidos")
@@ -228,6 +245,32 @@ def fonte_vtex() -> list[dict]:
 CAMPOS = ["data", "fonte", "loja", "marca", "categoria", "titulo", "quantidade", "preco_total", "preco_unitario", "link"]
 
 
+def remover_precos_suspeitos(ofertas: list[dict]) -> list[dict]:
+    """Descarta ofertas muito abaixo da mediana da mesma categoria: quase sempre usado, anúncio errado ou golpe."""
+    limite = CONFIG.get("desconto_maximo_vs_mediana")
+    if not limite:
+        return ofertas
+    por_cat: dict[str, list[float]] = {}
+    for o in ofertas:
+        por_cat.setdefault(o["categoria"], []).append(o["preco_unitario"])
+    geral = median([o["preco_unitario"] for o in ofertas]) if ofertas else 0
+    saida = []
+    for o in ofertas:
+        precos = por_cat[o["categoria"]]
+        if len(precos) >= 3:
+            ref = median(precos)
+        elif ORDEM_CATEGORIAS and o["categoria"] == ORDEM_CATEGORIAS[-1]:
+            ref = 0  # categoria mais barata com poucas ofertas: não compara com a mediana geral
+        else:
+            ref = geral
+        if ref and o["preco_unitario"] < ref * (1 - limite):
+            print(f"[suspeito] descartado {brl(o['preco_unitario'])} {o['marca']} {o['loja']} "
+                  f"(mediana da categoria {brl(ref)}): {o['titulo'][:70]}")
+            continue
+        saida.append(o)
+    return saida
+
+
 def deduplicar(ofertas: list[dict]) -> list[dict]:
     melhores: dict[tuple, dict] = {}
     for o in ofertas:
@@ -254,7 +297,8 @@ def salvar(ofertas: list[dict]) -> list[dict]:
     # para os relatórios, só entram marcas permitidas (o CSV guarda tudo o que já foi coletado)
     for l in linhas:
         l["categoria"] = categoria(l["marca"])
-    return [l for l in linhas if marca_permitida(l["marca"])]
+    return [l for l in linhas if marca_permitida(l["marca"]) and not loja_bloqueada(l["loja"])
+            and oferta_valida(l["titulo"])]
 
 
 # --------------------------------------------------------------------------- relatório
@@ -677,7 +721,7 @@ def main() -> int:
             ofertas += fonte()
         except Exception as e:  # noqa: BLE001  (uma fonte falhar não derruba o robô)
             print(f"[erro] {fonte.__name__}: {e}")
-    ofertas = deduplicar(ofertas)
+    ofertas = remover_precos_suspeitos(deduplicar(ofertas))
     historico = salvar(ofertas)
     docs = RAIZ / "docs"
     docs.mkdir(exist_ok=True)
