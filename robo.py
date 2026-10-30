@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Robô de pesquisa de preços de pneus 185/65 R15 (somente novos, sem remold).
+Robô de pesquisa de preços de pneus (medida em config.json; somente novos, sem remold).
 
 Fontes:
   1. Google Shopping via SerpApi   -> segredo SERPAPI_KEY (principal; agrega dezenas de lojas)
@@ -59,7 +59,10 @@ def normalizar(txt: str) -> str:
     return re.sub(r"\s+", " ", txt.lower()).strip()
 
 
-RE_MEDIDA = re.compile(r"185\s*[/\-\s]\s*65\s*[/\-\s]?\s*(?:z?r|aro)?\s*[/\-\s]?\s*15\b", re.I)
+_LARG, _PERFIL, _ARO = re.findall(r"\d+", CONFIG["medida"])[:3]  # "185/60 R15" -> 185, 60, 15
+RE_MEDIDA = re.compile(
+    rf"\b{_LARG}\s*[/\-\s]\s*{_PERFIL}\s*[/\-\s]?\s*(?:z?r|aro)?\s*[/\-\s]?\s*{_ARO}\b", re.I)
+SLUG_MEDIDA = f"{_LARG}-{_PERFIL}-r{_ARO}"
 RE_KIT = re.compile(r"\b(?:kit|jogo|combo)\s*(?:c/|com|de)?\s*(\d)\b|\b(\d)\s*(?:pneus|unidades|un\.?)\b", re.I)
 PROIBIDAS = [re.compile(rf"\b{re.escape(normalizar(p))}\b") for p in CONFIG["palavras_proibidas"]]
 
@@ -157,7 +160,7 @@ def fonte_google_shopping() -> list[dict]:
         print("[google] SERPAPI_KEY ausente, fonte ignorada")
         return []
     # 1 busca geral + 1 por marca (cada busca consome 1 crédito da SerpApi; plano grátis = 250/mês)
-    consultas = [CONFIG["consulta"]] + [f"pneu {m} 185/65 R15" for m in CONFIG.get("buscas_por_marca", [])]
+    consultas = [CONFIG["consulta"]] + [f"pneu {m} {CONFIG['medida']}" for m in CONFIG.get("buscas_por_marca", [])]
     itens = []
     for q in consultas:
         params = {
@@ -283,9 +286,23 @@ def deduplicar(ofertas: list[dict]) -> list[dict]:
     return sorted(melhores.values(), key=lambda x: x["preco_unitario"])
 
 
+def zerar_historico_se_mudou_medida(pasta: Path) -> None:
+    """Se a medida do config.json mudou, apaga o histórico antigo para não misturar preços de pneus diferentes."""
+    marcador = pasta / "medida.txt"
+    atual = CONFIG["medida"].strip()
+    anterior = marcador.read_text(encoding="utf-8").strip() if marcador.exists() else None
+    if anterior != atual:
+        for arq in [pasta / "historico.csv", *pasta.glob("*.json"), RAIZ / "docs" / "historico.csv"]:
+            if arq.exists():
+                arq.unlink()
+        print(f"[historico] medida mudou ({anterior or 'sem registro'} -> {atual}): histórico anterior apagado")
+        marcador.write_text(atual + "\n", encoding="utf-8")
+
+
 def salvar(ofertas: list[dict]) -> list[dict]:
     pasta = RAIZ / "data"
     pasta.mkdir(exist_ok=True)
+    zerar_historico_se_mudou_medida(pasta)
     (pasta / f"{HOJE}.json").write_text(json.dumps(ofertas, ensure_ascii=False, indent=2), encoding="utf-8")
     arq = pasta / "historico.csv"
     linhas = []
@@ -689,7 +706,7 @@ def enviar_email(ofertas: list[dict], historico: list[dict]) -> None:
                                  f"{o['preco_unitario']:.2f}".replace(".", ","), o["link"]]))
         # CSV com ponto e vírgula e BOM: abre direto no Excel em português com acentos corretos
         msg.add_attachment(("\ufeff" + "\n".join(buf)).encode("utf-8"), maintype="text", subtype="csv",
-                           filename=f"pneus-185-65-r15-{HOJE}.csv")
+                           filename=f"pneus-{SLUG_MEDIDA}-{HOJE}.csv")
 
     if dias:
         msg.add_attachment(csv_excel(
