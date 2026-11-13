@@ -24,6 +24,7 @@ import re
 import smtplib
 import ssl
 import sys
+import time
 import unicodedata
 from datetime import datetime
 from email.message import EmailMessage
@@ -722,17 +723,35 @@ def enviar_email(ofertas: list[dict], historico: list[dict]) -> None:
              for l in sorted(historico, key=lambda l: (l["data"], float(l["preco_unitario"])), reverse=True)]),
             maintype="text", subtype="csv", filename="historico-completo-ofertas.csv")
 
+    # O servidor do Yahoo às vezes demora ou derruba a conexão: tenta até 3 vezes em cada porta (465 SSL e 587 TLS)
+    tentativas = [(host, porta), (host, 587 if porta == 465 else 465)]
+    ultimo_erro = None
+    for h, p in tentativas:
+        for n in range(1, 4):
+            try:
+                enviar_smtp(h, p, usuario, senha, msg)
+                print(f"[email] enviado para {', '.join(destinos)} ({h}:{p}, tentativa {n})")
+                return
+            except smtplib.SMTPAuthenticationError:
+                raise  # senha errada: não adianta repetir
+            except Exception as e:  # noqa: BLE001
+                ultimo_erro = e
+                print(f"[email] tentativa {n} em {h}:{p} falhou: {e}")
+                time.sleep(20 * n)
+    raise RuntimeError(f"não foi possível enviar após várias tentativas: {ultimo_erro}")
+
+
+def enviar_smtp(host: str, porta: int, usuario: str, senha: str, msg: EmailMessage) -> None:
     ctx = ssl.create_default_context()
     if porta == 465:
-        with smtplib.SMTP_SSL(host, porta, context=ctx, timeout=TIMEOUT) as s:
+        with smtplib.SMTP_SSL(host, porta, context=ctx, timeout=60) as s:
             s.login(usuario, senha)
             s.send_message(msg)
     else:
-        with smtplib.SMTP(host, porta, timeout=TIMEOUT) as s:
+        with smtplib.SMTP(host, porta, timeout=60) as s:
             s.starttls(context=ctx)
             s.login(usuario, senha)
             s.send_message(msg)
-    print(f"[email] enviado para {', '.join(destinos)}")
 
 
 # --------------------------------------------------------------------------- main
